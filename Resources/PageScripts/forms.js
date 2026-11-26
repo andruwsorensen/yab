@@ -148,12 +148,14 @@
 
   // The first step of a sign-in that asks for the name alone, Google,
   // Microsoft, Apple, has no password box yet, and pair() finds nothing.
-  // A box that says it holds the account name, with no password box on
-  // the page, is that step. A form with more to fill in than a name is a
+  // A box that says it holds the account name, with no password box in
+  // its form, is that step. A form with more to fill in than a name is a
   // sign-up or a checkout, and is left alone.
   function lone(el) {
     if (!el || (el.tagName || '').toLowerCase() !== 'input') return null;
-    if (pair()) return null;
+    // Authentication may have blurred the remembered field to the body.
+    // Its form still decides, rather than a different sign-in on the page.
+    if (pair(el)) return null;
     var kind = (el.type || 'text').toLowerCase();
     if (kind !== 'text' && kind !== 'email' && kind !== 'tel') return null;
     var r = el.getBoundingClientRect();
@@ -185,6 +187,19 @@
   var autoDocument = String(performance.timeOrigin) + ':' + Math.random().toString(36).slice(2);
   var autoFields = new WeakMap(), nextAutoField = 0;
   var lastCode = null;
+  // A chosen account belongs to this exact field while its manager asks
+  // for approval. A blur to the body keeps it; another editable cancels it.
+  var lastSignIn = null, picked = null, nextPick = 0;
+  function fieldState(box) {
+    return box && { box: box, value: box.value, type: box.type,
+      autocomplete: box.getAttribute('autocomplete'), form: formOf(box), disabled: box.disabled, readOnly: box.readOnly };
+  }
+  function unchanged(state) {
+    if (!state) return true;
+    var box = state.box;
+    return box.isConnected && box.disabled === state.disabled && box.readOnly === state.readOnly && box.value === state.value &&
+      box.type === state.type && box.getAttribute('autocomplete') === state.autocomplete && formOf(box) === state.form;
+  }
   function fieldIdentity(box, both) {
     var anchor = both ? both.pass : box;
     if (!anchor) return '';
@@ -271,6 +286,7 @@
   // counts, and neither does a search box.
   var typed = [];
   document.addEventListener('input', function (e) {
+    picked = null;
     if (!e.isTrusted) return;
     report();
     var el = e.composedPath ? e.composedPath()[0] : e.target;
@@ -386,6 +402,43 @@
         box.dispatchEvent(new Event('change', { bubbles: true }));
       });
       return row.map(function (b) { return b.value; }).join('') === code;
+    },
+    // Keep the exact nodes and values before authentication; only an
+    // opaque ticket goes to the browser, never these page values.
+    pick: function (expectedDocument, expectedField) {
+      picked = null;
+      var box = lastSignIn, active = inside(document.activeElement);
+      if (autoDocument !== expectedDocument || !box || !box.isConnected || !seen(box) || box.disabled || box.readOnly) return null;
+      if (active !== box && active !== document.body && active !== document.documentElement) return null;
+      var both = pair(box);
+      if ((!both && !lone(box)) || fieldIdentity(box, both) !== expectedField) return null;
+      picked = { ticket: autoDocument + ':' + (++nextPick), box: box, href: location.href,
+        name: fieldState(both ? both.user : box), pass: fieldState(both && both.pass) };
+      return picked.ticket;
+    },
+    fillPicked: function (user, password, ticket) {
+      var choice = picked;
+      // An older response must not consume a newer account selection.
+      if (!choice || choice.ticket !== ticket) return false;
+      picked = null;
+      if (choice.href !== location.href) return false;
+      var box = choice.box, active = inside(document.activeElement);
+      if (active !== box && active !== document.body && active !== document.documentElement) return false;
+      if (!seen(box) || box.disabled || box.readOnly || !unchanged(choice.name) || !unchanged(choice.pass)) return false;
+      var both = pair(box);
+      if (choice.pass) {
+        if (!both || both.pass !== choice.pass.box || both.user !== (choice.name && choice.name.box)) return false;
+        if (!seen(both.pass) || both.pass.disabled || both.pass.readOnly) return false;
+        if (both.user && user && both.user.value !== user && (!both.user.value || seen(both.user))) {
+          if (both.user.disabled || both.user.readOnly) return false;
+          put(both.user, user);
+        }
+        put(both.pass, password);
+      } else {
+        if (both || lone(box) !== box) return false;
+        put(box, user);
+      }
+      return true;
     },
     autoFill: function (user, password, expectedDocument, expectedField) {
       if (autoDocument !== expectedDocument) return false;
@@ -828,6 +881,8 @@
     var typed = '';
     var secret = false, empty = true;
     var box = both && el && (el === both.user || el === both.pass) ? el : lone(el);
+    if (picked && el !== picked.box && editable(el)) picked = null;
+    if (box || editable(el)) lastSignIn = box;
     // A frame speaks of its sign-in boxes alone, and of the caret
     // leaving one.
     if (framed && !box && !saidBox) return;

@@ -2945,8 +2945,10 @@ final class Tab: ObservableObject, Identifiable, Relaying {
     /// `caret`: into the box the caret is in, a frame's too (`fieldFrame`),
     /// for Yab's own list, which listed that frame's site. Everyone else,
     /// an agent, a place, a manager, fills the page itself.
+    /// `pickedField`: the page's one-use selection from before a manager
+    /// asked for authentication, checked again even if its field blurred.
     func fill(user: String, password: String, agent: Bool = false, automatic: Bool = false, caret: Bool = false,
-              proven: Bool = false, done: ((Filled) -> Void)? = nil) {
+              proven: Bool = false, pickedField: String? = nil, done: ((Filled) -> Void)? = nil) {
         guard builtPage != nil else { done?(.gone); return }
         let frame = caret ? fieldFrame : nil
         let target = frame.flatMap { Tab.url(of: $0.origin) } ?? address
@@ -2981,7 +2983,8 @@ final class Tab: ObservableObject, Identifiable, Relaying {
                       responder === web || responder.isDescendant(of: web)
                 else { done?(.gone); return }
             }
-            let script = Tab.fillScript(user: user, password: password, automaticDocument: document, automaticField: identity)
+            let script = Tab.fillScript(user: user, password: password, automaticDocument: document,
+                                        automaticField: identity, pickedField: pickedField)
             guard let frame = self.fieldFrame, caret else {
                 web.runInYab(script) { result in
                     done?((result as? Bool) == true ? .filled : .gone)
@@ -3009,14 +3012,16 @@ final class Tab: ObservableObject, Identifiable, Relaying {
     /// `${`, backslash or line break in a password can end the string and
     /// become code. atob gives bytes, so they are read back as UTF-8.
     static func fillScript(user: String, password: String, automaticDocument: String? = nil,
-                           automaticField: String? = nil) -> String {
-        let values: [Any] = [user, password, automaticDocument as Any? ?? NSNull(), automaticField as Any? ?? NSNull()]
+                           automaticField: String? = nil, pickedField: String? = nil) -> String {
+        let values: [Any] = [user, password, automaticDocument as Any? ?? NSNull(),
+                             automaticField as Any? ?? NSNull(), pickedField as Any? ?? NSNull()]
         let data = (try? JSONSerialization.data(withJSONObject: values)) ?? Data("[\"\",\"\",null,null]".utf8)
         return """
         (() => {
           const bytes = Uint8Array.from(atob('\(data.base64EncodedString())'), c => c.charCodeAt(0));
-          const [user, password, document, field] = JSON.parse(new TextDecoder().decode(bytes));
+          const [user, password, document, field, picked] = JSON.parse(new TextDecoder().decode(bytes));
           if (!window.__yabForms) return false;
+          if (picked) return !!window.__yabForms.fillPicked(user, password, picked);
           return document
             ? !!window.__yabForms.autoFill(user, password, document, field)
             : !!window.__yabForms.fill(user, password);
