@@ -88,7 +88,7 @@ enum OneTime {
 
     // MARK: - the keychain
 
-    private static let service = Store.world.map { "Fast 2FA (\($0))" } ?? "Fast 2FA"
+    private static let service = Store.world.map { "Fast 2FA (\($0))" } ?? DevelopmentKeychain.service("Fast 2FA")
 
     private static func identity(_ host: String, _ user: String) -> [String: Any] {
         [

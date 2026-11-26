@@ -19,7 +19,7 @@ import YabStore
 // rest of Connect (AgentSetup's skill, tools and command) goes on as it
 // does after a plan's sign-in.
 enum AgentKey {
-    private static let service = "dev.serafim.fast.agent-key"
+    private static let service = DevelopmentKeychain.service("dev.serafim.fast.agent-key")
 
     /// The env name each CLI takes its key by.
     static let anthropic = "ANTHROPIC_API_KEY"

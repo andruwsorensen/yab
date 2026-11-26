@@ -180,7 +180,7 @@ public enum SHA256Digest {
 /// Items an older Yab left in the login keychain move over once at launch
 /// (`moveToThisDevice`).
 public enum MailKeychain {
-    public static let service = Store.world.map { "Fast Mail (\($0))" } ?? "Fast Mail"
+    public static let service = Store.world.map { "Fast Mail (\($0))" } ?? DevelopmentKeychain.service("Fast Mail")
 
     /// Which keychain an item is asked in.
     public enum Place: Sendable { case thisDevice, login }

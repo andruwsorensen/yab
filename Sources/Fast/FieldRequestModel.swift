@@ -333,7 +333,7 @@ final class RequestModel {
 /// on the first in their order that OpenRouter hasn't just turned away
 /// (rate limited, out of credit), and on the next while it sits out.
 enum OpenRouterKey {
-    private static let service = "dev.serafim.fast.openrouter"
+    private static let service = DevelopmentKeychain.service("dev.serafim.fast.openrouter")
     /// The first key's keychain account, from when there was one key.
     static let first = "field-requests"
     private static let idsKey = "models.keys.openrouter.ids"

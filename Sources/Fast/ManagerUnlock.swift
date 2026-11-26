@@ -12,7 +12,7 @@ enum ManagerUnlock {
     /// data protection keychain where the build is entitled to it. A test
     /// world keeps its own, apart from the person's.
     static var service: String {
-        "Yab · password manager unlock" + (Store.testing ? " · \(Store.folder.lastPathComponent)" : "")
+        DevelopmentKeychain.service("Yab · password manager unlock") + (Store.testing ? " · \(Store.folder.lastPathComponent)" : "")
     }
 
     static func query(_ id: String, protected: Bool) -> [String: Any] {

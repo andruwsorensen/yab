@@ -820,7 +820,7 @@ final class Clips: ObservableObject {
 
     // MARK: - the key
 
-    nonisolated private static let service = Store.world.map { "Fast Clipboard (\($0))" } ?? "Fast Clipboard"
+    nonisolated private static let service = Store.world.map { "Fast Clipboard (\($0))" } ?? DevelopmentKeychain.service("Fast Clipboard")
     nonisolated(unsafe) private static var cached: SymmetricKey?
     nonisolated private static let keyLock = NSLock()
 

@@ -751,6 +751,13 @@ if [ -n "${YAB_DEBUG:-}" ]; then
   /usr/libexec/PlistBuddy -c "Add :YabDebug string $YAB_DEBUG" "$APP/Contents/Info.plist"
 fi
 
+# Synced folders can attach Finder metadata to the generated bundle. It is
+# forbidden by codesign (Apple QA1940); clean only this development output.
+if [ "$STEP" = app ]; then
+  xattr -r -d com.apple.FinderInfo "$APP" 2>/dev/null || true
+  xattr -r -d com.apple.ResourceFork "$APP" 2>/dev/null || true
+fi
+
 # Signing. A Developer ID certificate, when there is one, with the hardened
 # runtime Gatekeeper insists on for anything notarised; otherwise ad-hoc,
 # which is enough for the app to run on the machine that built it, and
