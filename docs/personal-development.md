@@ -12,6 +12,10 @@ The development build also removes FinderInfo/ResourceFork metadata only from
 its generated app before signing. This fixes the signing failure observed in
 this synced Documents folder, following Apple's QA1940. It never clears metadata
 on `/Applications/yab.app` or source assets.
+On this Mac File Provider reattached that metadata immediately, so `build` is
+also linked to `~/Applications/yab-development-build`, outside synced Documents.
+Recreate that local link when restoring into a synced folder; the enclosing
+workspace's docs/DEVELOPMENT.md gives the commands. No source checkout was moved.
 
 `Sources/YabStore/DevelopmentKeychain.swift` follows the existing Store.name and
 Store.development pattern. Its callers keep their existing test-world naming.
