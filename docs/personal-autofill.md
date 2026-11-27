@@ -65,12 +65,25 @@ YAB_SIGN_IDENTITY=- YAB_APP_CACHE=0 YAB_JOBS=4 ./build.sh
 open "build/yab Dev.app"
 ```
 
-In Yab Dev, connect Apple Passwords using Dev's own settings if needed.
-Do not import the production browser profile. On the reported Church
-Account sign-in, choose the saved account on the username step, approve
-Touch ID, and verify the username fills without typing it manually.
-Confirm that Next becomes enabled. A normal login is optional; verifying
-the username step does not require submitting credentials.
+The ad hoc Dev build above cannot use the real Apple Passwords helper.
+`ApplePasswords.mayRun` requires the browser entitlement checked by
+`Preferences.entitledToPasskeys`, except for explicit test stand-ins.
+The running Dev app is ad hoc signed with no team identity and lacks
+`com.apple.developer.web-browser.public-key-credential`. Consequently,
+Apple Passwords cannot be selected or offer saved accounts in this build.
+Connecting a manager or focusing the username again does not remove this
+signing restriction. The earlier instruction to test Touch ID here was incorrect.
+
+Apple grants this capability through its managed-entitlement process:
+[Apple's browser entitlement documentation](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.web-browser.public-key-credential).
+Real verification requires a build with valid Apple-approved signing and
+provisioning for its own bundle ID, or maintainer testing in an eligible
+build containing this patch. Preserve the separate development profile.
+
+In that eligible build, choose the saved account on the reported Church
+Account username step, approve Touch ID, and verify that the username
+fills without typing it and Next becomes enabled. Submitting the login
+is unnecessary for checking this step.
 
 Also verify cancellation: dismiss authentication and confirm no value is
 filled. Record the app build, engine, and result in the PR. Automated
@@ -91,7 +104,11 @@ compatibility; leave the PR in draft until the intended scenario is checked.
   `0.47.19`, build `202611261509`. Signature verification passed, and the
   packaged `forms.js` matches the tested source byte for byte.
 - JavaScript syntax, design checks and `git diff --check` passed.
-- Real Apple Passwords/Touch ID and Chromium verification remain pending.
+- Live follow-up found the username field present and focused, but no
+  Apple Passwords suggestions. The entitlement gate above blocks native
+  Apple Passwords in the ad hoc build before the patched fill path runs.
+- Real Apple Passwords/Touch ID verification is blocked pending an eligible
+  signed build. Chromium verification also remains pending.
   No merge or production installation was performed.
 
 Practice on a separate branch: add a case to the username rejection test's
