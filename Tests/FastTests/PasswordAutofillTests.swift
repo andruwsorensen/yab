@@ -65,8 +65,140 @@ struct PasswordAutofillTests {
 }
 
 extension PasswordAutofillTests {
+    /// A picked manager account waits for authentication with a one-use
+    /// field ticket. These fixtures use dummy values and no password manager.
+    @MainActor
+    private static func pick(_ web: WKWebView, focus: [String: Any]) async throws -> String {
+        let result = try await web.callAsyncJavaScript(
+            "return window.__yabForms.pick(documentID, fieldID)",
+            arguments: ["documentID": focus["document"] as? String ?? "", "fieldID": focus["field"] as? String ?? ""],
+            in: nil, contentWorld: Web.world)
+        return try #require(result as? String)
+    }
+
+    @MainActor
+    private static func fillPicked(_ web: WKWebView, ticket: String) async throws -> Bool {
+        await withCheckedContinuation { go in
+            web.evaluateInYab(Tab.fillScript(user: "picked@example.com", password: "dummy-secret", pickedField: ticket)) {
+                go.resume(returning: $0 as? Bool == true)
+            }
+        }
+    }
+
+    private static let nameStep = """
+    <form><input id="name" autocomplete="username"><button>Next</button></form>
+    <input id="other" type="search">
+    <script>window.changed = 0; window.sent = 0;
+    document.getElementById('name').addEventListener('input', () => window.changed++);
+    document.querySelector('form').addEventListener('submit', e => { e.preventDefault(); window.sent++; });</script>
+    """
+
+    @Test @MainActor func aPickedUsernameSurvivesAuthenticationBlurAndFillsOnlyOnce() async throws {
+        let (web, messages) = try await Self.page(Self.nameStep)
+        let focus = try await Self.focus("name", in: web, messages: messages)
+        let ticket = try await Self.pick(web, focus: focus)
+        _ = try await web.evaluateJavaScript("document.getElementById('name').blur(); true")
+        #expect(try await Self.fillPicked(web, ticket: ticket))
+        #expect(try await web.evaluateJavaScript("document.getElementById('name').value") as? String == "picked@example.com")
+        #expect(try await web.evaluateJavaScript("window.changed") as? Int == 1)
+        #expect(try await web.evaluateJavaScript("window.sent") as? Int == 0)
+        #expect(try await Self.fillPicked(web, ticket: ticket) == false)
+    }
+
+    @Test(arguments: [
+        "document.getElementById('name').value = 'my edit'",
+        "document.getElementById('name').outerHTML = '<input id=name autocomplete=username>'",
+        "document.getElementById('name').remove()",
+        "document.getElementById('name').disabled = true",
+        "document.getElementById('name').readOnly = true",
+        "document.getElementById('name').style.display = 'none'",
+        "document.getElementById('name').value = 'edit'; document.getElementById('name').dispatchEvent(new Event('input', {bubbles:true})); document.getElementById('name').value = ''",
+        "document.getElementById('other').focus(); document.getElementById('other').blur()",
+        "history.pushState({}, '', '/different-step')"
+    ])
+    @MainActor func aPickedUsernameRejectsChangesDuringAuthentication(change: String) async throws {
+        let (web, messages) = try await Self.page(Self.nameStep)
+        let focus = try await Self.focus("name", in: web, messages: messages)
+        let ticket = try await Self.pick(web, focus: focus)
+        _ = try await web.evaluateJavaScript(change + "; document.activeElement.blur(); true")
+        let eventsBeforeFill = try await web.evaluateJavaScript("window.changed") as? Int
+        #expect(try await Self.fillPicked(web, ticket: ticket) == false)
+        #expect(try await web.evaluateJavaScript("!document.getElementById('name') || document.getElementById('name').value !== 'picked@example.com'") as? Bool == true)
+        #expect(try await web.evaluateJavaScript("document.getElementById('other').value") as? String == "")
+        #expect(try await web.evaluateJavaScript("window.changed") as? Int == eventsBeforeFill)
+        #expect(try await web.evaluateJavaScript("window.sent") as? Int == 0)
+    }
+
+    @Test @MainActor func aNewDocumentCannotReceiveAPickedUsernameFromTheSameURL() async throws {
+        let (web, messages) = try await Self.page(Self.nameStep)
+        let focus = try await Self.focus("name", in: web, messages: messages)
+        let ticket = try await Self.pick(web, focus: focus)
+        let (replacement, replacementMessages) = try await Self.page(Self.nameStep)
+        _ = try await Self.focus("name", in: replacement, messages: replacementMessages)
+        #expect(try await Self.fillPicked(replacement, ticket: ticket) == false)
+        #expect(try await replacement.evaluateJavaScript("document.getElementById('name').value") as? String == "")
+    }
+
+    @Test @MainActor func pickedPairsAndPasswordOnlyStepsStillFillAfterBlur() async throws {
+        let hiddenName = "<form><input id=name autocomplete=username value=picked@example.com style='display:none' readonly><input id=pass type=password autocomplete=current-password></form>"
+        for html in [Self.signIn, "<form><input id=pass type=password autocomplete=current-password></form>", hiddenName] {
+            let (web, messages) = try await Self.page(html)
+            let focus = try await Self.focus("pass", in: web, messages: messages)
+            let ticket = try await Self.pick(web, focus: focus)
+            _ = try await web.evaluateJavaScript("document.getElementById('pass').blur(); true")
+            #expect(try await Self.fillPicked(web, ticket: ticket))
+            #expect(try await web.evaluateJavaScript("document.getElementById('pass').value") as? String == "dummy-secret")
+        }
+    }
+
+    @Test @MainActor func anOlderManagerResponseCannotConsumeANewerSelection() async throws {
+        let (web, messages) = try await Self.page(Self.nameStep)
+        let focus = try await Self.focus("name", in: web, messages: messages)
+        let older = try await Self.pick(web, focus: focus)
+        let newer = try await Self.pick(web, focus: focus)
+        #expect(try await Self.fillPicked(web, ticket: older) == false)
+        #expect(try await Self.fillPicked(web, ticket: newer))
+    }
+
+    @Test(arguments: [
+        "document.getElementById('pass').value = 'typed while waiting'",
+        "document.getElementById('name').outerHTML = '<input id=name autocomplete=username>'"
+    ])
+    @MainActor func aPickedPairRejectsEditsAndReplacedFields(change: String) async throws {
+        let (web, messages) = try await Self.page(Self.signIn)
+        let focus = try await Self.focus("pass", in: web, messages: messages)
+        let ticket = try await Self.pick(web, focus: focus)
+        _ = try await web.evaluateJavaScript(change + "; document.activeElement.blur(); true")
+        #expect(try await Self.fillPicked(web, ticket: ticket) == false)
+        #expect(try await web.evaluateJavaScript("document.getElementById('name').value") as? String == "")
+        #expect(try await web.evaluateJavaScript("document.getElementById('pass').value !== 'dummy-secret'") as? Bool == true)
+        #expect(try await web.evaluateJavaScript("window.changed") as? Int == 0)
+    }
+
+    @Test @MainActor func aPickCanCaptureTheReportedFieldAfterTheNativeListBlurredIt() async throws {
+        let (web, messages) = try await Self.page(Self.nameStep)
+        let focus = try await Self.focus("name", in: web, messages: messages)
+        _ = try await web.evaluateJavaScript("document.getElementById('name').blur(); true")
+        let ticket = try await Self.pick(web, focus: focus)
+        #expect(try await Self.fillPicked(web, ticket: ticket))
+    }
+
+    @Test @MainActor func aPickedUsernameKeepsItsOwnFormAfterBlur() async throws {
+        let otherSignIn = "<form><input id=other-name autocomplete=username><input id=other-pass type=password></form>"
+        let (web, messages) = try await Self.page(Self.nameStep + otherSignIn)
+        let focus = try await Self.focus("name", in: web, messages: messages)
+        let ticket = try await Self.pick(web, focus: focus)
+        _ = try await web.evaluateJavaScript("document.getElementById('name').blur(); true")
+        #expect(try await Self.fillPicked(web, ticket: ticket))
+        #expect(try await web.evaluateJavaScript("document.getElementById('name').value") as? String == "picked@example.com")
+        #expect(try await web.evaluateJavaScript("document.getElementById('other-name').value") as? String == "")
+        #expect(try await web.evaluateJavaScript("document.getElementById('other-pass').value") as? String == "")
+        #expect(try await web.evaluateJavaScript("window.sent") as? Int == 0)
+    }
+
     private final class Messages: NSObject, WKScriptMessageHandler {
         var focus: [String: Any]?
+        var focusedFrame: WKFrameInfo?
         var submit: [String: Any]?
         var settled = 0
         var loads = 0
@@ -77,7 +209,7 @@ extension PasswordAutofillTests {
             case "load":
                 loads += 1
                 MainActor.assumeIsolated { loadFrame?(message.frameInfo) }
-            case "focus": focus = body
+            case "focus": focus = body; focusedFrame = message.frameInfo
             case "submit": submit = body
             case "settled": settled += 1
             default: break
@@ -301,6 +433,27 @@ extension PasswordAutofillTests {
 }
 
 extension PasswordAutofillTests {
+    @Test @MainActor func aPickedFieldTicketCannotFillAnotherFrame() async throws {
+        let (web, messages) = try await Self.page(Self.nameStep)
+        let focus = try await Self.focus("name", in: web, messages: messages)
+        let ticket = try await Self.pick(web, focus: focus)
+        let (framed, frameMessages) = try await Self.framePage()
+        _ = try await framed.evaluateJavaScript("""
+        const child = document.getElementById('child').contentWindow;
+        child.document.body.innerHTML = '<form><input id=u autocomplete=username><input id=p type=password></form>';
+        child.document.getElementById('u').focus(); true
+        """)
+        for _ in 0..<100 where frameMessages.focus?["signin"] as? Bool != true { try await Task.sleep(for: .milliseconds(25)) }
+        let frame = try #require(frameMessages.focusedFrame)
+        #expect(!frame.isMainFrame)
+        let result = try await framed.callAsyncJavaScript(
+            "return window.__yabForms.fillPicked('dummy-user', 'dummy-password', ticket)",
+            arguments: ["ticket": ticket], in: frame, contentWorld: Web.world)
+        #expect(result as? Bool == false)
+        #expect(try await framed.evaluateJavaScript("child.document.getElementById('u').value") as? String == "")
+        #expect(try await framed.evaluateJavaScript("child.document.getElementById('p').value") as? String == "")
+    }
+
     @MainActor
     private static func framePage() async throws -> (WKWebView, Messages) {
         let messages = Messages(), configuration = WKWebViewConfiguration()

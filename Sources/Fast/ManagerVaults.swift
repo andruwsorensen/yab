@@ -145,24 +145,40 @@ enum ManagerVaults {
                      done: @escaping @MainActor (Tab.Filled) -> Void) {
         let target = caret ? tab.fieldAddress : tab.address
         let frame = caret ? tab.fieldFrame : nil
+        let page = tab.builtPage, document = tab.fieldDocument, field = tab.fieldIdentity
         guard let adapter = ManagerVault.adapter(login.provider),
               let host = target?.host()?.lowercased(),
               ManagerVault.matches(login.urls, host: host) || login.urls.isEmpty
         else { done(.gone); return }
         Task { @MainActor in
+            // Capture the chosen field before the manager can blur it with
+            // Touch ID. The manager's secret is not part of the ticket.
+            var pickedField: String?
+            if caret {
+                guard let page, let document, let field,
+                      let value = try? await page.call(
+                        "return window.__yabForms ? window.__yabForms.pick(documentID, fieldID) : null",
+                        arguments: ["documentID": document, "fieldID": field], in: .yab, frame: frame),
+                      let ticket = value as? String
+                else { done(.gone); return }
+                pickedField = ticket
+                guard !tab.gone, !tab.asleep, tab.builtPage === page,
+                      sameOrigin(tab.fieldAddress, target), tab.fieldFrame?.token === frame?.token
+                else { done(.gone); return }
+            }
             guard let secret = try? await adapter.secret(login) else { done(.gone); return }
             // The manager may take a while (Touch ID, an app's approval):
             // the caret has to be where the login was matched still, the
             // same frame, or the page at the same origin, never wherever
             // it has gone since.
             let now = caret ? tab.fieldAddress : tab.address
-            guard sameOrigin(now, target), !caret || tab.fieldFrame?.token === frame?.token
+            guard sameOrigin(now, target), !caret || (tab.builtPage === page && tab.fieldFrame?.token === frame?.token)
             else { done(.gone); return }
             if login.provider == PasswordManagers.apple {
                 PasswordSaveDecision.remember(host: host, user: secret.user.isEmpty ? login.user : secret.user, password: secret.password)
             }
             tab.fill(user: secret.user.isEmpty ? login.user : secret.user, password: secret.password, agent: agent,
-                     caret: caret, proven: secret.proven) { done($0) }
+                     caret: caret, proven: secret.proven, pickedField: pickedField) { done($0) }
         }
     }
 }
